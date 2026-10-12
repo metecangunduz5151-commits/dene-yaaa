@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Mobilde CS:GO Tarzı Nişancı</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+            user-select: none;
+            background: #000;
+        }
+        #hud {
+            position: absolute;
+            top: 15px;
+            left: 15px;
+            color: white;
+            font-size: 18px;
+            font-weight: bold;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+            z-index: 10;
+        }
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 12px;
+            height: 12px;
+            background-color: #00ff00;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 10;
+            pointer-events: none;
+            border: 2px solid white;
+        }
+        /* Mobil Kontrol Butonları */
+        .joystick-area {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            display: grid;
+            grid-template-columns: 60px 60px 60px;
+            grid-template-rows: 60px 60px;
+            gap: 10px;
+            z-index: 20;
+        }
+        .control-btn {
+            background: rgba(255, 255, 255, 0.3);
+            border: 2px solid white;
+            border-radius: 15px;
+            color: white;
+            font-size: 20px;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            touch-action: manipulation;
+        }
+        .control-btn:active {
+            background: rgba(255, 255, 255, 0.7);
+        }
+        #btn-up { grid-column: 2; }
+        #btn-left { grid-column: 1; grid-row: 2; }
+        #btn-down { grid-column: 2; grid-row: 2; }
+        #btn-right { grid-column: 3; grid-row: 2; }
+
+        #fire-btn {
+            position: absolute;
+            bottom: 30px;
+            right: 30px;
+            width: 90px;
+            height: 90px;
+            background: rgba(255, 0, 0, 0.5);
+            border: 3px solid white;
+            border-radius: 50%;
+            color: white;
+            font-size: 18px;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 20;
+            touch-action: manipulation;
+        }
+        #fire-btn:active {
+            background: rgba(255, 0, 0, 0.8);
+        }
+        #look-hint {
+            position: absolute;
+            top: 50px;
+            right: 20px;
+            color: rgba(255,255,255,0.7);
+            font-size: 12px;
+            z-index: 10;
+            text-align: right;
+            pointer-events: none;
+        }
+    </style>
+    <!-- Three.js Kütüphanesi -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+
+    <div id="hud">Puan: <span id="score">0</span> | Can: <span id="health">100</span></div>
+    <div id="crosshair"></div>
+    <div id="look-hint">Sağa/sola bakmak için<br>ekranı kaydır</div>
+
+    <!-- Mobil Yön Tuşları -->
+    <div class="joystick-area">
+        <div class="control-btn" id="btn-up">⬆️</div>
+        <div class="control-btn" id="btn-left">⬅️</div>
+        <div class="control-btn" id="btn-down">⬇️</div>
+        <div class="control-btn" id="btn-right">➡️</div>
+    </div>
+
+    <!-- Ateş Etme Butonu -->
+    <div id="fire-btn">ATEŞ</div>
+
+    <script>
+        // --- TEMEL KURULUM ---
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x87ceeb);
+        scene.fog = new THREE.Fog(0x87ceeb, 10, 50);
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // --- IŞIKLANDIRMA ---
+        const light = new THREE.DirectionalLight(0xffffff, 1);
+        light.position.set(10, 20, 10);
+        scene.add(light);
+        scene.add(new THREE.AmbientLight(0x404040));
+
+        // --- ZEMİN ---
+        const floorGeometry = new THREE.PlaneGeometry(60, 60);
+        const floorMaterial = new THREE.MeshLambertMaterial({ color: 0x555555 });
+        const floor = new THREE.Mesh(floorGeometry, floorMaterial);
+        floor.rotation.x = -Math.PI / 2;
+        scene.add(floor);
+
+        // --- OYUNCU DEĞİŞKENLERİ ---
+        let score = 0;
+        let health = 100;
+        let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
+        const velocity = new THREE.Vector3();
+        const direction = new THREE.Vector3();
+
+        camera.position.y = 1.6;
+        camera.rotation.order = "YXZ";
+
+        // --- DOKUNMATİK EKRAN İLE ETRAFA BAKMA (KAYDIRMA) ---
+        let touchX = 0, touchY = 0;
+        let isTouchingScreen = false;
+
+        document.addEventListener('touchstart', (e) => {
+            // Eğer butonlara basılmıyorsa etrafa bakma alanıdır
+            if (e.target.classList.contains('control-btn') || e.target.id === 'fire-btn') return;
+            touchX = e.touches[0].clientX;
+            touchY = e.touches[0].clientY;
+            isTouchingScreen = true;
+        });
+
+        document.addEventListener('touchmove', (e) => {
+            if (!isTouchingScreen) return;
+            const currentX = e.touches[0].clientX;
+            const currentY = e.touches[0].clientY;
+
+            const deltaX = currentX - touchX;
+            const deltaY = currentY - touchY;
+
+            camera.rotation.y -= deltaX * 0.005;
+            camera.rotation.x -= deltaY * 0.005;
+            camera.rotation.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, camera.rotation.x));
+
+            touchX = currentX;
+            touchY = currentY;
+        });
+
+        document.addEventListener('touchend', () => {
+            isTouchingScreen = false;
+        });
+
+        // --- MOBİL BUTON OLAYLARI ---
+        function bindButton(id, onStart, onEnd) {
+            const btn = document.getElementById(id);
+            btn.addEventListener('touchstart', (e) => { e.preventDefault(); onStart(); });
+            btn.addEventListener('touchend', (e) => { e.preventDefault(); onEnd(); });
+        }
+
+        bindButton('btn-up', () => moveForward = true, () => moveForward = false);
+        bindButton('btn-down', () => moveBackward = true, () => moveBackward = false);
+        bindButton('btn-left', () => moveLeft = true, () => moveLeft = false);
+        bindButton('btn-right', () => moveRight = true, () => moveRight = false);
+
+        // --- DÜŞMANLAR ---
+        const enemies = [];
+        function createEnemy() {
+            const geometry = new THREE.BoxGeometry(1, 2, 1);
+            const material = new THREE.MeshLambertMaterial({ color: 0xff0000 });
+            const enemy = new THREE.Mesh(geometry, material);
+            
+            const angle = Math.random() * Math.PI * 2;
+            const radius = 20 + Math.random() * 5;
+            enemy.position.x = Math.cos(angle) * radius;
+            enemy.position.z = Math.sin(angle) * radius;
+            enemy.position.y = 1;
+
+            scene.add(enemy);
+            enemies.push(enemy);
+        }
+
+        setInterval(createEnemy, 2500);
+
+        // --- ATEŞ ETME BUTONU ---
+        const raycaster = new THREE.Raycaster();
+        document.getElementById('fire-btn').addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+            const intersects = raycaster.intersectObjects(enemies);
+
+            if (intersects.length > 0) {
+                const hitEnemy = intersects[0].object;
+                scene.remove(hitEnemy);
+                enemies.splice(enemies.indexOf(hitEnemy), 1);
+                
+                score += 10;
+                document.getElementById('score').innerText = score;
+            }
+        });
+
+        // --- OYUN DÖNGÜSÜ ---
+        let prevTime = performance.now();
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const time = performance.now();
+            const delta = (time - prevTime) / 1000;
+            prevTime = time;
+
+            // Hareket Fizikleri
+            velocity.x -= velocity.x * 10.0 * delta;
+            velocity.z -= velocity.z * 10.0 * delta;
+
+            direction.z = Number(moveForward) - Number(moveBackward);
+            direction.x = Number(moveRight) - Number(moveLeft);
+            direction.normalize();
+
+            if (moveForward || moveBackward) velocity.z -= direction.z * 40.0 * delta;
+            if (moveLeft || moveRight) velocity.x -= direction.x * 40.0 * delta;
+
+            camera.translateX(-velocity.x * delta);
+            camera.translateZ(velocity.z * delta);
+            camera.position.y = 1.6;
+
+            // Sınırlar
+            camera.position.x = Math.max(-28, Math.min(28, camera.position.x));
+            camera.position.z = Math.max(-28, Math.min(28, camera.position.z));
+
+            // Düşmanlar oyuncuya yaklaşır
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                const enemy = enemies[i];
+                const dir = new THREE.Vector3();
+                dir.subVectors(camera.position, enemy.position);
+                dir.y = 0;
+                dir.normalize();
+                
+                enemy.position.addScaledVector(dir, 2.5 * delta);
+
+                const dist = enemy.position.distanceTo(camera.position);
+                if (dist < 1.2) {
+                    health -= 10;
+                    document.getElementById('health').innerText = Math.max(0, health);
+                    
+                    scene.remove(enemy);
+                    enemies.splice(i, 1);
+
+                    if (health <= 0) {
+                        alert('Oyun Bitti! Toplam Puanın: ' + score);
+                        location.reload();
+                    }
+                }
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
+      
